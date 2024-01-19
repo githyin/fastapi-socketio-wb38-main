@@ -53,7 +53,7 @@ usersInRoom = {}
 async def joined(sid, roomName, userName):
     sessions[roomName] = {"userName": userName,
                           "mute_audio": False, "mute_video": False}
-    await sio.emit("readyForStreamSuccess", {"roomName": roomName}, room=sid)
+    await sio.emit("readyForStreamSuccess", {"roomName": roomName}, to=sid)
    # print(f"rooName: {roomName}, userName: {userName}, sid: {sid}")
 
 @sio.on("join_room")
@@ -79,18 +79,17 @@ async def on_join_room(sid, roomName):
 
     await sio.emit("user_join", {"sid": sid, "userName": userName}, room=roomName, skip_sid=sid)
 
+    if roomName not in usersInRoom:
+        usersInRoom[roomName] = [sid]
 
-    # if roomName not in usersInRoom:
-    #     usersInRoom[roomName] = [sid]
-
-    #     await sio.emit("user_list", {"my_id": sid}, to=sid)
-    # else:
-    #    userList = {userName: usersName[userName]
-    #                for userName in usersInRoom[roomName]}
+        await sio.emit("user_list", {"my_id": sid}, to=sid)
+    else:
+       userList = {userName: usersName[userName]
+                   for userName in usersInRoom[roomName]}
        
-    #    await sio.emit("user_list", {"list": userList, "my_id": sid}, to=sid)
-    #    usersInRoom[roomName].append(sid)
-    #    print(f"users: {usersInRoom}")
+       await sio.emit("user_list", {"list": userList, "my_id": sid}, to=sid)
+       usersInRoom[roomName].append(sid)
+       print(f"users: {usersInRoom}")
 
 
 # FastAPI Start Setting
