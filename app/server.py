@@ -53,15 +53,23 @@ usersInRoom = {}
 async def joined(sid, roomName, userName):
     sessions[roomName] = {"userName": userName,
                           "mute_audio": False, "mute_video": False}
-    await sio.emit("readyForStreamSuccess", {"roomName": roomName})
-    print(f"rooName: {roomName}, userName: {userName}, sid: {sid}")
+    await sio.emit("readyForStreamSuccess", {"roomName": roomName}, room=sid)
+   # print(f"rooName: {roomName}, userName: {userName}, sid: {sid}")
 
 @sio.on("join_room")
 async def on_join_room(sid, roomName):
-    roomName = roomName
     userName = sessions[roomName]["userName"]
 
-    print(f"join_success {roomName}")
+    # 중복 참여 확인
+    if sid in roomsName:
+        print(f"User {userName} with SID {sid} is already in room {roomsName[sid]}.")
+        return
+    if userName in usersName.values():
+        print(f"User {userName} is already in a room.")
+        return
+
+    print(f"join_success {userName} in {roomName}")
+    print(f"{sid}")
 
     await sio.enter_room(room=roomName, sid=sid)
     roomsName[sid] = roomName
@@ -70,6 +78,7 @@ async def on_join_room(sid, roomName):
     print(f"[{roomName}] New member joined: {userName}<{sid}>")
 
     await sio.emit("user_join", {"sid": sid, "userName": userName}, room=roomName, skip_sid=sid)
+
 
     # if roomName not in usersInRoom:
     #     usersInRoom[roomName] = [sid]

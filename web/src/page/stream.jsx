@@ -4,10 +4,8 @@ function Stream({ socket }) {
   // 상태 관리
   const [roomName, setRoomName] = useState("");
   const [userName, setUserName] = useState("");
-  const [streamState, setStreamState] = useState(false);
   const [audioState, setAudioState] = useState(true);
   const [videoState, setVideoState] = useState(true);
-  let peerList = [];
 
   // 미디어 제약 조건 정의
   const mediaConstraints = {
@@ -24,7 +22,6 @@ function Stream({ socket }) {
       .then((stream) => {
         const myVideo = document.getElementById("local_vid");
         myVideo.srcObject = stream;
-        setStreamState(true);
         setAudioMuteState(!audioState);
         setVideoMuteState(!videoState);
       })
@@ -70,23 +67,22 @@ function Stream({ socket }) {
     }
   };
 
-  // useEffect를 사용하여 소켓 이벤트 핸들러 설정
   useEffect(() => {
+    let peerList = [];
     const handleReadyForStreamSuccess = ({ roomName }) => {
-      console.log("ready for stream success");
-      console.log(roomName);
+      console.log("handleReadyForStreamSuccess", roomName);
       socket.emit("join_room", roomName);
     };
 
     const handleUserJoin = ({ sid, userName }) => {
       if (sid) {
-        console.log(`user join: ${sid}, ${userName}`);
+        console.log(`사용자 참가: ${sid}, ${userName}`);
         let peerId = sid;
         let peerName = userName;
         peerList[peerId] = undefined;
         addVideoElement(peerId, peerName);
       } else {
-        console.error("Invalid data structure or missing 'sid' property");
+        console.error("잘못된 데이터 구조 또는 누락된 'sid' 속성");
       }
     };
 
@@ -111,8 +107,9 @@ function Stream({ socket }) {
     // 컴포넌트 언마운트 시 리스너 제거
     return () => {
       socket.off("readyForStreamSuccess", handleReadyForStreamSuccess);
+      socket.off("user_join", handleUserJoin);
     };
-  }, [socket]); // socket이 변경될 때마다 useEffect 실행
+  }, [socket]);
 
   // JSX 반환
   return (

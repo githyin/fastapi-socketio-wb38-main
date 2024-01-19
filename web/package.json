@@ -20,7 +20,8 @@
     "react-scripts": "5.0.1",
     "socket.io-client": "^4.7.3",
     "web-vitals": "^2.1.4",
-    "zustand": "^4.4.7"
+    "zustand": "^4.4.7",
+    "@babel/plugin-proposal-private-property-in-object":"7.21.11"
   },
   "scripts": {
     "start": "react-scripts start",
