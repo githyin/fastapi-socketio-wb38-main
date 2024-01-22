@@ -68,9 +68,6 @@ async def on_join_room(sid, roomName):
         print(f"User {userName} is already in a room.")
         return
 
-    print(f"join_success {userName} in {roomName}")
-    print(f"{sid}")
-
     await sio.enter_room(room=roomName, sid=sid)
     roomsName[sid] = roomName
     usersName[sid] = userName
@@ -79,18 +76,37 @@ async def on_join_room(sid, roomName):
 
     await sio.emit("user_join", {"sid": sid, "userName": userName}, room=roomName, skip_sid=sid)
 
+    print("send user_join event success")
+
     if roomName not in usersInRoom:
         usersInRoom[roomName] = [sid]
 
         await sio.emit("user_list", {"my_id": sid}, to=sid)
-    else:
-       userList = {userName: usersName[userName]
-                   for userName in usersInRoom[roomName]}
-       
-       await sio.emit("user_list", {"list": userList, "my_id": sid}, to=sid)
-       usersInRoom[roomName].append(sid)
-       print(f"users: {usersInRoom}")
 
+        print("send user_list event success 1")
+    else:
+        userList = {userName: usersName[userName]
+                    for userName in usersInRoom[roomName]}
+
+        # 이 부분에 추가: 이미 해당 사용자가 목록에 있는 경우에만 emit
+        if sid not in usersInRoom[roomName]:
+            await sio.emit("user_list", {"list": userList, "my_id": sid}, to=sid)
+            print("send user_list event success 2")
+            usersInRoom[roomName].append(sid)
+            print(f"users: {usersInRoom}")
+
+
+@sio.on("data")
+async def on_data(sid, data):
+    sender_sid = data['sender_id']
+    target_sid = data['target_id']
+    if sender_sid != sid:
+        print("[Not supposed to happen!] request.sid and sender_id don't match!!!")
+
+    if data["type"] != "new-ice-candidate":
+        print('{} message from {} to {}'.format(
+            data["type"], sender_sid, target_sid))
+    await sio.emit('data', data, to=target_sid)
 
 # FastAPI Start Setting
 if __name__ == '__main__':

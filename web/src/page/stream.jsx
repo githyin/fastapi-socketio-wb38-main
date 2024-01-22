@@ -94,7 +94,7 @@ function Stream({ socket }) {
   // 서버를 통해 메시지 전송을 위한 콜백 함수
   const sendViaServer = useCallback(
     (data) => {
-      socket.emit("message", data);
+      socket.emit("data", data);
     },
     [socket]
   );
@@ -128,6 +128,28 @@ function Stream({ socket }) {
     return document.getElementById("vid_" + element_id);
   }
 
+  // handleNegotiationNeededEvent 함수 추가
+  const handleNegotiationNeededEvent = useCallback(
+    (peer_id) => {
+      peerList[peer_id]
+        .createOffer()
+        .then((offer) => peerList[peer_id].setLocalDescription(offer))
+        .then(() => {
+          console.log(`sending offer to <${peer_id}> ...`);
+          sendViaServer({
+            sender_id: myID,
+            target_id: peer_id,
+            type: "offer",
+            sdp: peerList[peer_id].localDescription,
+          });
+        })
+        .catch((error) => {
+          console.error(`Error creating and sending offer: ${error}`);
+        });
+    },
+    [peerList, sendViaServer, myID]
+  );
+
   // peer connection 생성 함수
   const createPeerConnection = useCallback(
     (peer_id) => {
@@ -141,8 +163,77 @@ function Stream({ socket }) {
       peerConnection.onicecandidate = (event) =>
         handleICECandidateEvent(event, peer_id);
       peerConnection.ontrack = (event) => handleTrackEvent(event, peer_id);
+      peerConnection.onnegotiationneeded = () =>
+        handleNegotiationNeededEvent(peer_id);
     },
-    [peerList, setPeerList, handleICECandidateEvent, handleTrackEvent]
+    [
+      peerList,
+      setPeerList,
+      handleICECandidateEvent,
+      handleTrackEvent,
+      handleNegotiationNeededEvent,
+    ]
+  );
+
+  // handleOfferMsg 함수 수정
+  const handleOfferMsg = useCallback(
+    (msg) => {
+      const peer_id = msg["sender_id"];
+
+      console.log(`Offer received from <${peer_id}>`);
+
+      createPeerConnection(peer_id);
+      let desc = new RTCSessionDescription(msg["sdp"]);
+      peerList[peer_id]
+        .setRemoteDescription(desc)
+        .then(() => {
+          let local_stream = myVideo.current.srcObject;
+          local_stream
+            .getTracks()
+            .forEach((track) =>
+              peerList[peer_id].addTrack(track, local_stream)
+            );
+        })
+        .then(() => peerList[peer_id].createAnswer())
+        .then((answer) => peerList[peer_id].setLocalDescription(answer))
+        .then(() => {
+          console.log(`Sending answer to <${peer_id}> ...`);
+          sendViaServer({
+            sender_id: myID,
+            target_id: peer_id,
+            type: "answer",
+            sdp: peerList[peer_id].localDescription,
+          });
+        })
+        .catch((error) => {
+          console.log(error);
+        });
+    },
+    [peerList, myID, sendViaServer, createPeerConnection]
+  );
+
+  // handleAnswerMsg 함수 수정
+  const handleAnswerMsg = useCallback(
+    (msg) => {
+      const peer_id = msg["sender_id"];
+      console.log(`Answer received from <${peer_id}>`);
+      let desc = new RTCSessionDescription(msg["sdp"]);
+      peerList[peer_id].setRemoteDescription(desc);
+    },
+    [peerList]
+  );
+
+  // handleNewICECandidateMsg 함수 추가
+  const handleNewICECandidateMsg = useCallback(
+    (msg) => {
+      const peer_id = msg["sender_id"];
+      console.log(`ICE candidate received from <${peer_id}>`);
+      const candidate = new RTCIceCandidate(msg.candidate);
+      peerList[peer_id].addIceCandidate(candidate).catch((error) => {
+        console.error(`Error adding ICE candidate: ${error}`);
+      });
+    },
+    [peerList]
   );
 
   // 초대 함수를 useCallback으로 감싸기
@@ -174,6 +265,7 @@ function Stream({ socket }) {
     for (let peer_id in peerList) {
       invite(peer_id);
     }
+    console.log("start_webrtc");
   }, [peerList, invite]);
 
   // useEffect를 사용하여 소켓 이벤트 리스너 등록 및 해제
@@ -185,7 +277,6 @@ function Stream({ socket }) {
 
     const handleUserJoin = ({ sid, userName }) => {
       if (sid) {
-        console.log(`사용자 참가: ${sid}, ${userName}`);
         let peerId = sid;
         let peerName = userName;
         setPeerList((prevPeerList) => {
@@ -194,7 +285,7 @@ function Stream({ socket }) {
             [peerId]: undefined, // 또는 새로운 객체를 할당
           };
         });
-
+        console.log(`사용자 참가: ${sid}, ${userName}`);
         addVideoElement(peerId, peerName);
       } else {
         console.error("잘못된 데이터 구조 또는 누락된 'sid' 속성");
@@ -205,6 +296,7 @@ function Stream({ socket }) {
     function addVideoElement(element_id, display_name) {
       const videoElement = makeVideoElementCustom(element_id, display_name);
       document.getElementById("video_grid").appendChild(videoElement);
+      console.log("비디오 엘리먼트 추가 완료");
     }
 
     // 커스텀 비디오 엘리먼트 생성 함수
@@ -215,14 +307,13 @@ function Stream({ socket }) {
       return vid;
     }
 
-    const handleUserList = ({ data }) => {
-      console.log("user list recvd ", data);
-      setMyID(data["my_id"]);
-      console.log("myid", myID);
-      if ("list" in data) {
-        // 방에 처음으로 연결되지 않은 경우, 기존 사용자 목록 수신
-        let recvd_list = data["list"];
-        // 기존 사용자를 사용자 목록에 추가
+    const handleUserList = ({ my_id, list }) => {
+      console.log("user list recv ", my_id);
+      setMyID(my_id);
+      if (list) {
+        //방에 처음으로 연결되지 않은 경우, 기존 사용자 목록 수신
+        let recvd_list = list;
+        //기존 사용자를 사용자 목록에 추가
         for (let peerId in recvd_list) {
           let peerName = recvd_list[peerId];
           setPeerList((prevPeerList) => {
@@ -235,20 +326,46 @@ function Stream({ socket }) {
           addVideoElement(peerId, peerName);
         }
         start_webrtc();
+        console.log("웹 알티씨 스타트 성공");
       }
     };
 
     // 소켓 이벤트 리스너 등록
     socket.on("readyForStreamSuccess", handleReadyForStreamSuccess);
     socket.on("user_join", handleUserJoin);
-    socket.on("user-list", handleUserList);
+    socket.on("user_list", handleUserList);
+    socket.on("data", (msg) => {
+      switch (msg["type"]) {
+        case "offer":
+          handleOfferMsg(msg);
+          break;
+        case "answer":
+          handleAnswerMsg(msg);
+          break;
+        case "new-ice-candidate":
+          handleNewICECandidateMsg(msg);
+          break;
+        default:
+          console.warn("Unknown message type:", msg["type"]);
+      }
+    });
 
     // 컴포넌트가 언마운트 될 때 리스너 제거
     return () => {
       socket.off("readyForStreamSuccess", handleReadyForStreamSuccess);
       socket.off("user_join", handleUserJoin);
+      socket.off("user_list", handleUserList);
+      socket.off("data");
     };
-  }, [socket, start_webrtc, invite, myID]);
+  }, [
+    socket,
+    start_webrtc,
+    invite,
+    myID,
+    handleOfferMsg,
+    handleAnswerMsg,
+    handleNewICECandidateMsg,
+  ]);
 
   // JSX 반환
   return (
