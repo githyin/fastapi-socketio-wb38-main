@@ -15,9 +15,6 @@ const PC_CONFIG = {
   ],
 };
 
-// 비동기 함수 실행을 위한 sleep 함수
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
 function Stream({ socket }) {
   // 로컬 비디오 참조를 위한 useRef
   const myVideo = useRef(null);
@@ -40,18 +37,22 @@ function Stream({ socket }) {
 
   // 스트림 시작 함수
   const startStream = () => {
-    navigator.mediaDevices
-      .getUserMedia(mediaConstraints)
-      .then((stream) => {
-        if (myVideo.current) {
-          myVideo.current.srcObject = stream;
-        }
-        setAudioMuteState(!audioState);
-        setVideoMuteState(!videoState);
-      })
-      .catch((error) => {
-        console.log(`startStream 에러 ${error}`);
-      });
+    return new Promise((resolve, reject) => {
+      navigator.mediaDevices
+        .getUserMedia(mediaConstraints)
+        .then((stream) => {
+          if (myVideo.current) {
+            myVideo.current.srcObject = stream;
+          }
+          setAudioMuteState(!audioState);
+          setVideoMuteState(!videoState);
+          resolve();
+        })
+        .catch((error) => {
+          console.log(`startStream 에러 ${error}`);
+          reject(error);
+        });
+    });
   };
 
   // 오디오 음소거 설정 함수
@@ -84,11 +85,11 @@ function Stream({ socket }) {
   const readyForStream = (event) => {
     event.preventDefault();
 
-    startStream();
-
-    if (roomName.trim() && userName.trim()) {
-      socket.emit("readyForStream", roomName, userName);
-    }
+    startStream().then(() => {
+      if (roomName.trim() && userName.trim()) {
+        socket.emit("readyForStream", roomName, userName);
+      }
+    });
   };
 
   // 서버를 통해 메시지 전송을 위한 콜백 함수
@@ -130,49 +131,43 @@ function Stream({ socket }) {
 
   // handleNegotiationNeededEvent 함수 추가
   const handleNegotiationNeededEvent = useCallback(
-    (peer_id) => {
-      peerList[peer_id]
+    (peer_id, peerConnection) => {
+      peerConnection
         .createOffer()
-        .then((offer) => peerList[peer_id].setLocalDescription(offer))
+        .then((offer) => peerConnection.setLocalDescription(offer))
         .then(() => {
           console.log(`sending offer to <${peer_id}> ...`);
           sendViaServer({
             sender_id: myID,
             target_id: peer_id,
             type: "offer",
-            sdp: peerList[peer_id].localDescription,
+            sdp: peerConnection.localDescription,
           });
         })
         .catch((error) => {
           console.error(`Error creating and sending offer: ${error}`);
         });
     },
-    [peerList, sendViaServer, myID]
+    [sendViaServer, myID]
   );
 
   // peer connection 생성 함수
   const createPeerConnection = useCallback(
     (peer_id) => {
-      // 새 RTCPeerConnection을 추가하기 위해 상태 업데이트 함수 사용
+      console.log("create peer");
+      const peerConnection = new RTCPeerConnection(PC_CONFIG);
       setPeerList((prevPeerList) => ({
         ...prevPeerList,
-        [peer_id]: new RTCPeerConnection(PC_CONFIG),
+        [peer_id]: peerConnection,
       }));
-      // 이벤트 핸들러 설정
-      const peerConnection = peerList[peer_id];
       peerConnection.onicecandidate = (event) =>
         handleICECandidateEvent(event, peer_id);
       peerConnection.ontrack = (event) => handleTrackEvent(event, peer_id);
       peerConnection.onnegotiationneeded = () =>
-        handleNegotiationNeededEvent(peer_id);
+        handleNegotiationNeededEvent(peer_id, peerConnection);
+      return peerConnection;
     },
-    [
-      peerList,
-      setPeerList,
-      handleICECandidateEvent,
-      handleTrackEvent,
-      handleNegotiationNeededEvent,
-    ]
+    [handleICECandidateEvent, handleTrackEvent, handleNegotiationNeededEvent]
   );
 
   // handleOfferMsg 함수 수정
@@ -240,22 +235,29 @@ function Stream({ socket }) {
   const invite = useCallback(
     async (peerId) => {
       console.log("invite");
-      if (peerList[peerId]) {
+      if (!peerList[peerId]) {
         console.log(
-          "[Not supposed to happen!] Attempting to start a connection that already exists!"
+          `[Not supposed to happen!] Attempting to start a connection that already exists! ${JSON.stringify(
+            peerList[peerId]
+          )}`
         );
       } else if (peerId === myID) {
         console.log("[Not supposed to happen!] Trying to connect to self!");
       } else {
         console.log(`Creating peer connection for <${peerId}> ...`);
-        createPeerConnection(peerId);
-        await sleep(2000);
-        let local_stream = myVideo.current.srcObject;
-        console.log(myVideo.current.srcObject);
-        local_stream.getTracks().forEach((track) => {
-          peerList[peerId].addTrack(track, local_stream);
-        });
-        console.log(myVideo.current.srcObject);
+        const peerConnection = createPeerConnection(peerId);
+
+        // myVideo.current와 myVideo.current.srcObject가 유효한지 확인
+        if (myVideo.current && myVideo.current.srcObject) {
+          let local_stream = myVideo.current.srcObject;
+          console.log(myVideo.current.srcObject);
+          local_stream.getTracks().forEach((track) => {
+            peerConnection.addTrack(track, local_stream);
+          });
+          console.log(myVideo.current.srcObject);
+        } else {
+          console.log("myVideo or myVideo.srcObject is null");
+        }
       }
     },
     [peerList, myID, createPeerConnection]
@@ -311,9 +313,9 @@ function Stream({ socket }) {
       return vid;
     }
 
-    const handleUserList = async ({ my_id, list }) => {
+    const handleUserList = ({ my_id, list }) => {
       console.log("user list recv ", my_id);
-      await setMyID(my_id); //일단 여기 라인 비동기라서 아래에서 콘솔로그로 확인하면 my_id 업데이트 안되서 null값 나옴
+      setMyID(my_id); //일단 여기 라인 비동기라서 아래에서 콘솔로그로 확인하면 my_id 업데이트 안되서 null값 나옴
       if (list) {
         //방에 처음으로 연결되지 않은 경우, 기존 사용자 목록 수신
         let recvd_list = list;
@@ -322,7 +324,7 @@ function Stream({ socket }) {
           let peerName = recvd_list[peerId];
           //setPeerList도 비동기인데가 왜 업데이트 안되는 지 모르겠음 아마 비동기에 useEffect섞여서
           //myID랑 같은 문제인듯
-          await setPeerList((prevPeerList) => {
+          setPeerList((prevPeerList) => {
             const newPeerList = { ...prevPeerList, [peerId]: undefined };
             console.log(newPeerList);
             return {
