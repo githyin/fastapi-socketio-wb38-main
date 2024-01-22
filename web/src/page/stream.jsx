@@ -29,7 +29,7 @@ function Stream({ socket }) {
   const [videoState, setVideoState] = useState(true);
   const [peerList, setPeerList] = useState({});
   const [myID, setMyID] = useState(null);
-
+  const [userListUpdated, setUserListUpdated] = useState(false);
   // 미디어 제약 조건 정의
   const mediaConstraints = {
     audio: true,
@@ -238,21 +238,22 @@ function Stream({ socket }) {
 
   // 초대 함수를 useCallback으로 감싸기
   const invite = useCallback(
-    async (peer_id) => {
-      if (peerList[peer_id]) {
+    async (peerId) => {
+      console.log("invite");
+      if (peerList[peerId]) {
         console.log(
           "[Not supposed to happen!] Attempting to start a connection that already exists!"
         );
-      } else if (peer_id === myID) {
+      } else if (peerId === myID) {
         console.log("[Not supposed to happen!] Trying to connect to self!");
       } else {
-        console.log(`Creating peer connection for <${peer_id}> ...`);
-        createPeerConnection(peer_id);
+        console.log(`Creating peer connection for <${peerId}> ...`);
+        createPeerConnection(peerId);
         await sleep(2000);
         let local_stream = myVideo.current.srcObject;
         console.log(myVideo.current.srcObject);
         local_stream.getTracks().forEach((track) => {
-          peerList[peer_id].addTrack(track, local_stream);
+          peerList[peerId].addTrack(track, local_stream);
         });
         console.log(myVideo.current.srcObject);
       }
@@ -262,8 +263,11 @@ function Stream({ socket }) {
 
   // WebRTC 시작 함수
   const start_webrtc = useCallback(() => {
-    for (let peer_id in peerList) {
-      invite(peer_id);
+    console.log("PeerList in start_webrtc:", peerList);
+    //PeerList가 비어있으니 for문이 안 돌고 그래서 invite함수를 호출하지 못해 나아가지 못하는 상황
+    for (let peerId in peerList) {
+      console.log("invite 호출되냐?");
+      invite(peerId);
     }
     console.log("start_webrtc");
   }, [peerList, invite]);
@@ -307,26 +311,27 @@ function Stream({ socket }) {
       return vid;
     }
 
-    const handleUserList = ({ my_id, list }) => {
+    const handleUserList = async ({ my_id, list }) => {
       console.log("user list recv ", my_id);
-      setMyID(my_id);
+      await setMyID(my_id); //일단 여기 라인 비동기라서 아래에서 콘솔로그로 확인하면 my_id 업데이트 안되서 null값 나옴
       if (list) {
         //방에 처음으로 연결되지 않은 경우, 기존 사용자 목록 수신
         let recvd_list = list;
         //기존 사용자를 사용자 목록에 추가
         for (let peerId in recvd_list) {
           let peerName = recvd_list[peerId];
-          setPeerList((prevPeerList) => {
+          //setPeerList도 비동기인데가 왜 업데이트 안되는 지 모르겠음 아마 비동기에 useEffect섞여서
+          //myID랑 같은 문제인듯
+          await setPeerList((prevPeerList) => {
+            const newPeerList = { ...prevPeerList, [peerId]: undefined };
+            console.log(newPeerList);
             return {
-              ...prevPeerList,
-              [peerId]: undefined, // 또는 새로운 객체를 할당
+              newPeerList,
             };
           });
-
+          setUserListUpdated(true); // 여기에서 상태를 업데이트합니다.
           addVideoElement(peerId, peerName);
         }
-        start_webrtc();
-        console.log("웹 알티씨 스타트 성공");
       }
     };
 
@@ -366,6 +371,13 @@ function Stream({ socket }) {
     handleAnswerMsg,
     handleNewICECandidateMsg,
   ]);
+
+  useEffect(() => {
+    if (userListUpdated && myID && Object.keys(peerList).length > 0) {
+      start_webrtc();
+      setUserListUpdated(false); // start_webrtc 함수가 호출된 후에 상태를 초기화합니다.
+    }
+  }, [userListUpdated, myID, peerList, start_webrtc]);
 
   // JSX 반환
   return (

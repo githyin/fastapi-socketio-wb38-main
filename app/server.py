@@ -50,7 +50,7 @@ usersName = {}
 usersInRoom = {}
 
 @sio.on("readyForStream")
-async def joined(sid, roomName, userName):
+async def readyForStream(sid, roomName, userName):
     sessions[roomName] = {"userName": userName,
                           "mute_audio": False, "mute_video": False}
     await sio.emit("readyForStreamSuccess", {"roomName": roomName}, to=sid)
